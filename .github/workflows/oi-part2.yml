@@ -1,7 +1,8 @@
 name: NSE OI - Part 2 (12:25 to 15:30)
 
-on:
+"on":
   schedule:
+    # 12:00 IST = 06:30 UTC. Part 1 ke khatam hone ka wait karega.
     - cron: '30 6 * * 1-5'
   workflow_dispatch:
 
