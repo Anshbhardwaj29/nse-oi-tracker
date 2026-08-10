@@ -456,6 +456,11 @@ def run_session(mock=False, change_mode=CHANGE_MODE, until=None, build_concl=Tru
         except Exception as e:  # noqa: BLE001
             log.error("%s: FAIL — %r", label, e)
 
+    if not os.path.exists(path):
+        log.warning("Koi data collect nahi hua — file nahi bani. "
+                    "(Market band tha, holiday tha, ya saare fetch fail hue)")
+        return None
+
     if build_concl:
         build_conclusion(path, change_mode)
         upload_to_s3(path)
