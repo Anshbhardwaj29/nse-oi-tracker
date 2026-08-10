@@ -36,9 +36,32 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # Python 3.8
+    from backports.zoneinfo import ZoneInfo
+
+# Server UTC me ho sakta hai — IST force karna zaroori hai
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def now_ist():
+    return datetime.now(IST)
+
+
+def today_ist():
+    return now_ist().date()
+
+
+def at_ist(d, t):
+    return datetime.combine(d, t, tzinfo=IST)
+
 # ------------------------------------------------------------------ CONFIG --
 
-OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "NSE_OI_Data")
+OUTPUT_DIR = os.getenv(
+    "OI_OUTPUT_DIR",
+    os.path.join(os.path.expanduser("~"), "NSE_OI_Data"),
+)
 
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
@@ -47,6 +70,15 @@ INTERVAL_MIN = 5
 # "day"      -> % change in OI vs previous day's close OI (NSE ka apna number)
 # "interval" -> % change in OI vs pichhle 5-minute snapshot (intraday momentum)
 CHANGE_MODE = "day"
+
+# ---- Cloud upload (S3) ----
+# Credentials environment se aayenge — script me kabhi mat likhna.
+#   export AWS_ACCESS_KEY_ID=...
+#   export AWS_SECRET_ACCESS_KEY=...
+UPLOAD_TO_S3 = os.getenv("OI_S3_BUCKET") is not None
+S3_BUCKET = os.getenv("OI_S3_BUCKET", "")
+S3_PREFIX = os.getenv("OI_S3_PREFIX", "nse-oi-data")
+S3_REGION = os.getenv("OI_S3_REGION", "ap-south-1")
 
 # Snapshot sheet me kaunse columns save karne hain
 SNAPSHOT_COLS = [
@@ -238,8 +270,8 @@ def to_dataframe(rows, baseline=None, d=None):
 def slot_labels():
     """['09.15', '09.20', ... '15.30']"""
     out = []
-    t = datetime.combine(date.today(), MARKET_OPEN)
-    end = datetime.combine(date.today(), MARKET_CLOSE)
+    t = at_ist(today_ist(), MARKET_OPEN)
+    end = at_ist(today_ist(), MARKET_CLOSE)
     while t <= end:
         out.append(t.strftime("%H.%M"))
         t += timedelta(minutes=INTERVAL_MIN)
@@ -364,6 +396,19 @@ def _style_conclusion(path, n_slots):
     wb.save(path)
 
 
+def upload_to_s3(path):
+    """Optional — sirf tab chalega jab OI_S3_BUCKET env var set ho."""
+    if not UPLOAD_TO_S3 or not path or not os.path.exists(path):
+        return
+    try:
+        import boto3
+        key = f"{S3_PREFIX.strip('/')}/{os.path.basename(path)}"
+        boto3.client("s3", region_name=S3_REGION).upload_file(path, S3_BUCKET, key)
+        log.info("S3 upload done -> s3://%s/%s", S3_BUCKET, key)
+    except Exception as e:  # noqa: BLE001
+        log.warning("S3 upload fail: %r", e)
+
+
 # ---------------------------------------------------------------- RUNTIME --
 
 
@@ -371,8 +416,8 @@ def is_trading_day(d: date):
     return d.weekday() < 5 and d.strftime("%Y-%m-%d") not in HOLIDAYS_2026
 
 
-def run_session(mock=False, change_mode=CHANGE_MODE):
-    today = date.today()
+def run_session(mock=False, change_mode=CHANGE_MODE, until=None, build_concl=True):
+    today = today_ist()
     if not mock and not is_trading_day(today):
         log.info("Aaj market band hai (%s) — skip", today)
         return None
@@ -380,6 +425,8 @@ def run_session(mock=False, change_mode=CHANGE_MODE):
     path = excel_path_for(today)
     client = NSEClient(mock=mock)
     slots = slot_labels()
+    if until:
+        slots = [s for s in slots if s.replace(".", "") <= until.replace(":", "")]
     baseline = load_baseline(today)  # resume ke liye — script restart ho to baseline wahi rahe
     log.info("Session start — %d slots, file: %s", len(slots), path)
     if baseline:
@@ -387,10 +434,10 @@ def run_session(mock=False, change_mode=CHANGE_MODE):
 
     for label in slots:
         hh, mm = label.split(".")
-        target = datetime.combine(today, dtime(int(hh), int(mm)))
+        target = at_ist(today, dtime(int(hh), int(mm)))
 
         if not mock:
-            wait = (target - datetime.now()).total_seconds()
+            wait = (target - now_ist()).total_seconds()
             if wait > 0:
                 log.info("Wait for %s (%d sec)...", label, int(wait))
                 time.sleep(wait)
@@ -405,23 +452,28 @@ def run_session(mock=False, change_mode=CHANGE_MODE):
                 log.warning("%s: khaali data", label)
                 continue
             write_snapshot(path, label, df)
+            upload_to_s3(path)
         except Exception as e:  # noqa: BLE001
             log.error("%s: FAIL — %r", label, e)
 
-    build_conclusion(path, change_mode)
-    log.info("Din khatam. File ready: %s", path)
+    if build_concl:
+        build_conclusion(path, change_mode)
+        upload_to_s3(path)
+        log.info("Din khatam. File ready: %s", path)
+    else:
+        log.info("Part done (till %s). File: %s", until, path)
     return path
 
 
 def run_daemon(change_mode=CHANGE_MODE):
     log.info("Daemon mode ON — roz apne aap chalega. Band karne ke liye Ctrl+C")
     while True:
-        now = datetime.now()
+        now = now_ist()
         if is_trading_day(now.date()) and now.time() < MARKET_CLOSE:
             run_session(change_mode=change_mode)
-        nxt = datetime.combine(now.date() + timedelta(days=1), dtime(9, 10))
+        nxt = at_ist(now.date() + timedelta(days=1), dtime(9, 10))
         log.info("Agla run: %s", nxt)
-        time.sleep(max(60, (nxt - datetime.now()).total_seconds()))
+        time.sleep(max(60, (nxt - now_ist()).total_seconds()))
 
 
 def main():
@@ -430,6 +482,10 @@ def main():
     ap.add_argument("--once", action="store_true", help="ek snapshot lo aur ruk jao")
     ap.add_argument("--mock", action="store_true", help="fake data se test karo")
     ap.add_argument("--rebuild", metavar="FILE", help="purani file se CONCLUSION banao")
+    ap.add_argument("--until", metavar="HH:MM",
+                    help="is time tak hi chalao, phir ruk jao (jaise 12:20)")
+    ap.add_argument("--no-conclusion", action="store_true",
+                    help="CONCLUSION sheet mat banao (jab din adhoora ho)")
     ap.add_argument("--mode", choices=["day", "interval"], default=CHANGE_MODE,
                     help="day = vs prev day OI | interval = vs pichhle 5 min")
     args = ap.parse_args()
@@ -442,10 +498,10 @@ def main():
 
     if args.once:
         client = NSEClient(mock=args.mock)
-        today = date.today()
+        today = today_ist()
         df, _ = to_dataframe(client.fetch_oi(), load_baseline(today), today)
-        label = datetime.now().strftime("%H.%M")
-        path = excel_path_for(date.today())
+        label = now_ist().strftime("%H.%M")
+        path = excel_path_for(today)
         write_snapshot(path, label, df)
         print(df.head(15).to_string(index=False))
         return
@@ -453,7 +509,8 @@ def main():
     if args.daemon:
         run_daemon(args.mode)
     else:
-        run_session(mock=args.mock, change_mode=args.mode)
+        run_session(mock=args.mock, change_mode=args.mode,
+                    until=args.until, build_concl=not args.no_conclusion)
 
 
 if __name__ == "__main__":
