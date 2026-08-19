@@ -24,9 +24,13 @@ Baseline is fixed to previous day's close — every slot compares to the same nu
 
 ## 📁 Output Format
 NSE_OI_2026-08-19.xlsx
+
 ├── Sheet: 9.15 ← Raw OI data at 9:15 AM
+
 ├── Sheet: 9.20 ← Raw OI data at 9:20 AM
+
 ├── ...
+
 └── Sheet: conclude ← % OI change per symbol across all timestampsChange = ((Current OI - Prev Day Close OI) / Prev Day Close OI) × 100
 
 
