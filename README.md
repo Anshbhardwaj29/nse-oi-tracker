@@ -45,6 +45,8 @@ cd nse-oi-tracker
 pip install -r requirements.txt
 # Configure systemd timer for 9:10 AM IST Mon-Fri
 ```
+
+## 🔄 System Flow
 ```mermaid
 flowchart TD
     A["🕐 systemd Timer\nMon–Fri · 9:10 AM IST"]
