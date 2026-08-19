@@ -41,20 +41,32 @@ cd nse-oi-tracker
 pip install -r requirements.txt
 # Configure systemd timer for 9:10 AM IST Mon-Fri
 ```
-## 🔄 System Flow
+```mermaid
+flowchart TD
+    A["🕐 systemd Timer\nMon–Fri · 9:10 AM IST"]
+    B["☁️ Oracle Cloud — Mumbai\nIndian IP · Ubuntu 24.04"]
+    C["🐍 Python Scraper\nrequests + User-Agent header"]
+    D["📡 NSE Website / API\n214 symbols · OI data"]
+    E["🧮 % OI Change Calculation\n(Current OI − Prev-day Close) ÷ Prev-day Close × 100"]
+    F{"⏱️ Time < 3:30 PM?\nNext 5-min slot"}
+    G["📊 Excel File per Day\nNSE_OI_YYYY-MM-DD.xlsx\nOne sheet per 5-min slot"]
+    H["📋 Conclude Sheet\nSymbol × Timestamp grid\n% OI change vs prev-day close"]
 
-Scheduler (systemd, 9:10 AM IST)
-       ↓
-Oracle Cloud Mumbai (Indian IP)
-       ↓
-Python Scraper (requests + User-Agent)
-       ↓
-NSE API → 214 symbols OI data
-       ↓
-% OI Change = (Current OI - Prev Close OI) / Prev Close OI × 100
-       ↓
-Loop every 5 min (9:15 → 9:20 → ... → 3:30 PM)
-       ↓
-Excel File: NSE_OI_YYYY-MM-DD.xlsx
-  ├── Sheet: 9.15, 9.20, ..., 15.30
-  └── Sheet: conclude (symbol × timestamp % OI grid)
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F -- "Yes → wait 5 min" --> C
+    F -- "No → 3:30 PM done" --> G
+    G --> H
+
+    style A fill:#0F6E56,color:#E1F5EE,stroke:#085041
+    style B fill:#534AB7,color:#EEEDFE,stroke:#3C3489
+    style C fill:#534AB7,color:#EEEDFE,stroke:#3C3489
+    style D fill:#BA7517,color:#FAEEDA,stroke:#854F0B
+    style E fill:#185FA5,color:#E6F1FB,stroke:#0C447C
+    style F fill:#5F5E5A,color:#F1EFE8,stroke:#444441
+    style G fill:#3B6D11,color:#EAF3DE,stroke:#27500A
+    style H fill:#3B6D11,color:#EAF3DE,stroke:#27500A
+```
